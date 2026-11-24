@@ -1,294 +1,324 @@
 #!/usr/bin/env python3
-"""The World in One Day - Tuesday 24 November 2026.
+"""The World in One Day — Tuesday 24 November 2026.
 
-Broadsheet front page, drawn from scratch with Pillow.
-Deterministic: no random, no clock, no network.
-Output: entry.png, 1024x1024 RGB, < 1 MiB.
+A broadsheet front page drawn from scratch with Pillow: a big masthead,
+one dominant lead story with a schematic Nvidia share-price chart, six
+story panels and an In Brief strip. Everything is fixed geometry and
+fixed fonts, so the output is deterministic — no network, no clock,
+no randomness.
+
+Run:  python3 draw.py        # writes entry.png next to this file
 """
-import math
+
 import os
+
 from PIL import Image, ImageDraw, ImageFont
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "entry.png")
-W, H = 1024, 1024
+# ---------------------------------------------------------------- palette
 
-PAPER = (247, 243, 234)
-INK = (17, 17, 17)
-RED = (178, 34, 24)
-GREEN = (31, 120, 60)
-BLUE = (31, 78, 121)
-GREY = (90, 90, 90)
-RULE = (60, 60, 60)
-CHART_BG = (255, 255, 255)
-GRID = (210, 210, 210)
+PAPER = (247, 243, 234)   # newsprint cream
+INK = (26, 25, 22)        # near-black body ink
+FAINT = (96, 91, 80)      # datelines, captions
+RED = (139, 26, 26)       # kickers, chart line
+HAIR = (178, 170, 152)    # thin panel dividers
+CHART_GRID = (205, 198, 182)
+
+PAGE = 1024
+MARGIN = 40
+RIGHT = PAGE - MARGIN
+
+# ---------------------------------------------------------------- typefaces
 
 SERIF = "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf"
-SERIF_B = "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf"
-SERIF_I = "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf"
-SANS = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
-SANS_B = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+SERIF_BOLD = "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf"
+SERIF_ITALIC = "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf"
+SANS = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+SANS_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
+_cache = {}
 
 
-def font(path, size):
-    return ImageFont.truetype(path, size)
+def typeface(path, size):
+    """Load a TTF once; fall back to Pillow's built-in bitmap font."""
+    key = (path, size)
+    if key not in _cache:
+        try:
+            _cache[key] = ImageFont.truetype(path, size)
+        except OSError:
+            _cache[key] = ImageFont.load_default(size)
+    return _cache[key]
 
 
-def wrap(draw, text, fnt, max_w):
-    """Greedy word wrap by measured width. Returns list of lines."""
-    lines, cur = [], ""
-    for word in text.split(" "):
-        trial = word if not cur else cur + " " + word
-        if draw.textlength(trial, font=fnt) <= max_w:
-            cur = trial
+def fit_lines(canvas, text, font, width):
+    """Greedy word wrap; returns the list of lines that fit `width`."""
+    words = text.split()
+    lines, current = [], ""
+    for word in words:
+        trial = f"{current} {word}".strip()
+        if not current or canvas.textlength(trial, font=font) <= width:
+            current = trial
         else:
-            if cur:
-                lines.append(cur)
-            cur = word
-    if cur:
-        lines.append(cur)
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
     return lines
 
 
-def para(draw, x, y, text, fnt, max_w, leading, color=INK):
-    """Draw a wrapped paragraph. Returns y after last line."""
-    lines = wrap(draw, text, fnt, max_w)
-    for ln in lines:
-        draw.text((x, y), ln, font=fnt, fill=color)
+def paint_paragraph(canvas, x, y, width, text, font, leading, color=INK):
+    """Draw a wrapped paragraph; returns the y below its last line."""
+    for line in fit_lines(canvas, text, font, width):
+        canvas.text((x, y), line, font=font, fill=color)
         y += leading
     return y
 
 
-def rule(draw, x0, x1, y, width=1, color=RULE):
-    draw.line([(x0, y), (x1, y)], fill=color, width=width)
+def rule(canvas, y, weight, x0=MARGIN, x1=RIGHT, color=INK):
+    canvas.rectangle([x0, y, x1, y + weight - 1], fill=color)
 
 
-def main():
-    img = Image.new("RGB", (W, H), PAPER)
-    d = ImageDraw.Draw(img)
-    MX = 28                      # side margin
-    RX = W - MX                  # right edge
-    CW = RX - MX                 # content width
+# ---------------------------------------------------------------- masthead
 
-    # ---------- top dateline strip ----------
-    f_date = font(SERIF_B, 30)
-    f_small = font(SANS_B, 13)
-    d.text((MX, 12), "No. 328", font=f_small, fill=INK)
-    d.text((RX - d.textlength("PRICE: FREE", font=f_small), 12),
-           "PRICE: FREE", font=f_small, fill=INK)
-    date_txt = "TUESDAY 24 NOVEMBER 2026"
-    d.text(((W - d.textlength(date_txt, font=f_date)) / 2, 8),
-           date_txt, font=f_date, fill=RED)
-    rule(d, MX, RX, 46, 2)
-    rule(d, MX, RX, 50, 1)
+def paint_masthead(canvas):
+    dateline = typeface(SANS_BOLD, 12)
+    canvas.text((MARGIN, 30), "TUESDAY, 24 NOVEMBER 2026", font=dateline, fill=INK)
+    tag = "No. 329  ·  FREE"
+    canvas.text((RIGHT - canvas.textlength(tag, font=dateline), 30), tag,
+                font=dateline, fill=FAINT)
 
-    # ---------- masthead ----------
-    f_mast = font(SERIF_B, 60)
-    mast = "THE WORLD IN ONE DAY"
-    d.text(((W - d.textlength(mast, font=f_mast)) / 2, 56),
-           mast, font=f_mast, fill=INK)
-    f_tag = font(SERIF_I, 17)
-    tag = "Every story that mattered, on a single page"
-    d.text(((W - d.textlength(tag, font=f_tag)) / 2, 120),
-           tag, font=f_tag, fill=GREY)
-    rule(d, MX, RX, 146, 3)
-    rule(d, MX, RX, 150, 1)
+    title = typeface(SERIF_BOLD, 56)
+    name = "THE WORLD IN ONE DAY"
+    canvas.text(((PAGE - canvas.textlength(name, font=title)) / 2, 46),
+                name, font=title, fill=INK)
 
-    # ---------- lead headline ----------
-    y = 156
-    f_lead = font(SERIF_B, 68)
-    lead = "HUANG IS BACK"
-    d.text(((W - d.textlength(lead, font=f_lead)) / 2, y),
-           lead, font=f_lead, fill=INK)
-    y += 78
-    f_deck = font(SERIF_B, 20)
-    deck = ("Huang returns as Nvidia CEO \u2014 shares jump 33% as Trump "
-            "says: \u201cI made the deal\u201d")
-    for ln in wrap(d, deck, f_deck, CW):
-        d.text(((W - d.textlength(ln, font=f_deck)) / 2, y),
-               ln, font=f_deck, fill=INK)
-        y += 25
-    y += 4
-    rule(d, MX, RX, y, 1)
-    y += 10
+    rule(canvas, 104, 4)
+    rule(canvas, 112, 1)
 
-    # ---------- lead body (left) + share-price chart (right) ----------
-    lead_top = y
-    chart_w = 372
-    chart_x = RX - chart_w
-    body_w = chart_x - 18 - MX
-    f_body = font(SERIF, 16)
-    f_kick = font(SANS_B, 13)
-    f_quote = font(SERIF_I, 16)
 
-    d.text((MX, lead_top), "SANTA CLARA, CALIFORNIA \u2014 ANNOUNCED MONDAY",
-           font=f_kick, fill=RED)
-    by = lead_top + 20
-    by = para(d, MX, by,
-              "Nvidia\u2019s board voted unanimously on Monday to reinstate "
-              "co-founder Jensen Huang as president and chief executive, "
-              "effective immediately \u2014 11 days after he resigned over "
-              "revelations of extramarital affairs, including one with a woman "
-              "US officials suspect of spying for China.",
-              f_body, body_w, 19)
-    by += 6
-    by = para(d, MX, by,
-              "Shares jumped about 33% on Monday, adding roughly $1 trillion "
-              "in market value, and the Nasdaq rose 7%. The board said it was "
-              "satisfied with Huang\u2019s candour and, after input from senior "
-              "US officials, saw no national security risk.",
-              f_body, body_w, 19)
-    by += 6
-    by = para(d, MX, by,
-              "\u201cI spoke to them\u2026 And I convinced them. I made the "
-              "deal,\u201d President Donald Trump told CNBC on Monday.",
-              f_quote, body_w, 19)
-    by += 6
-    by = para(d, MX, by,
-              "The questions have not gone away: Huang is due to testify "
-              "publicly before the Senate Banking Committee on 3 December "
-              "about export controls, after closed-door House interviews on "
-              "1 December. Nvidia\u2019s own investigation continues.",
-              f_body, body_w, 19)
+# ---------------------------------------------------------------- lead story
 
-    # chart box
-    d.rectangle([chart_x, lead_top, RX, lead_top + 232], outline=INK, width=2)
-    d.text((chart_x + 10, lead_top + 8), "NVIDIA SHARES, $ \u2014 THE 33% BOUNCE",
-           font=font(SANS_B, 16), fill=RED)
-    d.text((chart_x + 10, lead_top + 30),
-           "Nvidia share price, $ \u2014 closing prices",
-           font=font(SANS, 12), fill=GREY)
-    # chart area: 29 Oct $213.66 -> 20 Nov $125.53 -> 23 Nov $165.57
-    cx0, cy0 = chart_x + 42, lead_top + 52
-    cw, ch = chart_w - 62, 104
-    d.rectangle([cx0, cy0, cx0 + cw, cy0 + ch], fill=CHART_BG,
-                outline=INK, width=1)
-    p_lo, p_hi = 100.0, 230.0
+LEAD_BODY = [
+    "Nvidia's board voted unanimously on Monday to reinstate co-founder "
+    "Jensen Huang as president and chief executive — 11 days after he "
+    "resigned over reports of extramarital affairs, including one with "
+    "Alice Huang, a former Megaspeed executive whom US officials suspect "
+    "of ties to Chinese intelligence. The board had ruled out his return "
+    "on 18 November, then reversed itself.",
+    "Shares jumped about 33% in Monday trading, closing near $165.57, up "
+    "from Friday's $125.53 — adding roughly $1 trillion in market value "
+    "— while the Nasdaq rose about 7%. President Trump told CNBC on "
+    "Monday: \"I spoke to them... And I convinced them. I made the deal.\"",
+    "Senate Banking Committee chair Tim Scott said Huang will testify "
+    "publicly on 3 December about export controls. Nvidia's own "
+    "investigation continues, and the company is appointing a Chief "
+    "Compliance Officer. On Tuesday, SK hynix's US-traded shares rose 20%.",
+]
 
-    def py_of(price):
-        return cy0 + ch - (price - p_lo) / (p_hi - p_lo) * ch
 
-    for gv in (100, 150, 200):
-        gy = py_of(gv)
-        d.line([(cx0, gy), (cx0 + cw, gy)], fill=GRID, width=1)
-        lab = str(gv)
-        d.text((cx0 - 34, gy - 6), lab, font=font(SANS, 11), fill=GREY)
-    pts = [(cx0 + 26, py_of(213.66), "29 Oct", "$213.66", True),
-           (cx0 + cw // 2, py_of(125.53), "20 Nov", "$125.53", False),
-           (cx0 + cw - 26, py_of(165.57), "23 Nov", "$165.57", True)]
-    d.line([pts[0][:2], pts[1][:2]], fill=RED, width=3)
-    d.line([pts[1][:2], pts[2][:2]], fill=GREEN, width=3)
-    for (px, py_, dl, vl, above) in pts:
-        d.ellipse([px - 4, py_ - 4, px + 4, py_ + 4], fill=INK, outline=INK)
-        f_v = font(SANS_B, 12)
-        d.text((px - d.textlength(vl, font=f_v) / 2,
-                py_ - 18 if above else py_ + 8), vl, font=f_v, fill=INK)
-        f_d = font(SANS, 11)
-        d.text((px - d.textlength(dl, font=f_d) / 2, cy0 + ch + 4),
-               dl, font=f_d, fill=GREY)
-    d.text((cx0 + cw - 62, py_of(165.57) - 34), "+33% Mon",
-           font=font(SANS_B, 12), fill=GREEN)
-    cap_y = lead_top + 178
-    cap_y = para(d, chart_x + 10, cap_y,
-                 "Shares fell more than 40% after the scandal broke in late "
-                 "October. Chip stocks rallied too: SK hynix\u2019s US-traded "
-                 "shares rose 20% on Tuesday.",
-                 font(SERIF, 13), chart_w - 20, 15)
-    lead_bottom = max(by, lead_top + 232) + 8
-    rule(d, MX, RX, lead_bottom, 2)
+def paint_share_chart(canvas, x0, y0, x1, y1):
+    """Schematic Nvidia close: 29 Oct $213.66, 20 Nov $125.53, 23 Nov $165.57."""
+    heading = typeface(SANS_BOLD, 12)
+    caption = typeface(SERIF_ITALIC, 12)
+    axis = typeface(SANS, 10)
+    value = typeface(SANS_BOLD, 11)
 
-    # ---------- six story panels, 3 x 2 ----------
-    py = lead_bottom + 8
-    panels = [
-        ("LIBYA", "Kyiv says it sank Russian warship",
-         "President Zelenskyy confirmed on Monday that seven Ukrainian "
-         "naval drones sank the Russian corvette Merkury off Benghazi on "
-         "Sunday; a Ka-27 helicopter was destroyed and the cargo ship "
-         "MV Angara hit."),
-        ("EUROPE", "EU unveils 22nd sanctions package",
-         "The European Commission proposed on Monday to cut about 60 "
-         "Russian banks from SWIFT, list 70+ more shadow-fleet ships and "
-         "crack down on crypto \u2014 and ban the Russian flag at EU "
-         "sports events. All 27 states must agree."),
-        ("INDIA\u2013NEPAL", "$1.62bn lifeline for flood-hit Nepal",
-         "India announced on Monday a $1.62bn package \u2014 a $377m grant "
-         "and a $1.24bn credit line \u2014 after talks with PM Balendra "
-         "Shah. August floods killed about 1,500 people; 5,200 are "
-         "missing."),
-        ("GAZA", "Strike kills 3 in Khan Younis",
-         "An Israeli airstrike killed at least three Palestinians on "
-         "Tuesday near a police outpost in Khan Younis, medics said; "
-         "five were wounded. Australia, Canada, Italy and the UK urged "
-         "aid access to flooded Gaza."),
-        ("SPORT", "2031 Women\u2019s World Cup to US & Mexico",
-         "FIFA confirmed the 2031 Women\u2019s World Cup will be hosted by "
-         "the US, Mexico, Costa Rica and Jamaica; the 2035 edition goes "
-         "to the United Kingdom."),
-        ("GULF", "Iran claims US drone downed",
-         "Iran\u2019s army said on Tuesday it shot down a US drone over "
-         "the Gulf. The US Treasury sanctioned more than two dozen "
-         "Iranian exchange houses and front firms under \u201cOperation "
-         "Economic Outcast\u201d."),
-    ]
-    gap = 12
-    pw = (CW - 2 * gap) // 3
-    ph = 162
-    f_pk = font(SANS_B, 13)
-    f_ph = font(SERIF_B, 19)
-    f_pb = font(SERIF, 14)
-    for i, (kick, head, body) in enumerate(panels):
-        col, row = i % 3, i // 3
-        x = MX + col * (pw + gap)
-        yy = py + row * (ph + gap)
-        d.rectangle([x, yy, x + pw, yy + ph], outline=INK, width=1)
-        d.text((x + 10, yy + 8), kick, font=f_pk, fill=RED)
-        hy = yy + 28
-        for ln in wrap(d, head, f_ph, pw - 20):
-            d.text((x + 10, hy), ln, font=f_ph, fill=INK)
-            hy += 22
-        hy += 2
-        byy2 = para(d, x + 10, hy, body, f_pb, pw - 20, 17)
-        assert byy2 <= yy + ph - 4, f"panel {kick} overflows: {byy2} > {yy + ph}"
-    panels_bottom = py + 2 * ph + gap
+    title = "NVIDIA SHARES — THE BOUNCE"
+    canvas.text(((x0 + x1 - canvas.textlength(title, font=heading)) / 2, y0),
+                title, font=heading, fill=INK)
+    sub = "+33% ON MONDAY  ·  ABOUT +$1 TRILLION IN VALUE"
+    canvas.text(((x0 + x1 - canvas.textlength(sub, font=axis)) / 2, y0 + 18),
+                sub, font=axis, fill=RED)
 
-    # ---------- In Brief strip ----------
-    iy = panels_bottom + 10
-    rule(d, MX, RX, iy, 2)
-    iy += 6
-    d.text((MX, iy), "IN BRIEF", font=font(SANS_B, 15), fill=RED)
-    iy += 20
-    brief = [
-        ("UKRAINE", "Fresh Russian strikes reported in the Kyiv region."),
-        ("SOUTH SUDAN", "24 killed, including seven children, in a strike."),
-        ("UNITED NATIONS", "Talks on lethal AI weapons end without a pact."),
-        ("MYANMAR", "ICJ ruled Thursday: Myanmar committed genocide."),
-        ("CRICKET", "India\u2013New Zealand Wellington Test ends in a draw."),
-        ("BALTIC", "Crew of Russian ship Sparta II evacuated after drone hit."),
-        ("HORMUZ", "Three tankers hit sea mines and caught fire, Iran says."),
-        ("CYPRUS", "Two Russian diplomats told to leave the island."),
-        ("KOREA", "Seoul says North Korean aircraft violated its airspace."),
-        ("IOWA", "Trump halts Army plan to detonate bomb chemicals."),
-    ]
-    f_bb = font(SANS, 12)
-    col_w = (CW - 20) // 2
-    left_items = brief[:5]
-    right_items = brief[5:]
-    byy3 = iy
-    for col_items, cx in ((left_items, MX), (right_items, MX + col_w + 20)):
-        cy = iy
-        for kick, txt in col_items:
-            line = kick + ": " + txt
-            for ln in wrap(d, line, f_bb, col_w):
-                d.text((cx, cy), ln, font=f_bb, fill=INK)
-                cy += 13
-            cy += 1
-        byy3 = max(byy3, cy)
-    assert byy3 <= H - 14, f"in-brief overflows: {byy3}"
-    rule(d, MX, RX, H - 12, 1)
+    plot_x0, plot_x1 = x0 + 34, x1 - 8
+    plot_y0, plot_y1 = y0 + 44, y1 - 34
+    low, high = 100.0, 220.0
 
-    img.save(OUT, "PNG", optimize=True)
-    print("wrote", OUT)
+    def to_xy(px, price):
+        return (px, plot_y1 - (price - low) / (high - low) * (plot_y1 - plot_y0))
+
+    for level in (100, 140, 180, 220):
+        gy = to_xy(0, level)[1]
+        canvas.line([(plot_x0, gy), (plot_x1, gy)], fill=CHART_GRID, width=1)
+        tag = f"${level}"
+        canvas.text((plot_x0 - canvas.textlength(tag, font=axis) - 6, gy - 6),
+                    tag, font=axis, fill=FAINT)
+
+    points = [("29 Oct", 213.66), ("20 Nov", 125.53), ("23 Nov", 165.57)]
+    xs = [plot_x0 + i * (plot_x1 - plot_x0) / 2 for i in range(3)]
+    dots = [to_xy(x, price) for x, (_, price) in zip(xs, points)]
+    canvas.line(dots, fill=RED, width=3, joint="curve")
+    for idx, ((label, price), (dx, dy)) in enumerate(zip(points, dots)):
+        canvas.ellipse([dx - 5, dy - 5, dx + 5, dy + 5], fill=RED)
+        tag = f"${price:.2f}"
+        # Value sits below the dot, except the last point where it goes above.
+        label_y = dy - 24 if idx == len(points) - 1 else dy + 10
+        canvas.text((dx - canvas.textlength(tag, font=value) / 2, label_y),
+                    tag, font=value, fill=RED)
+        canvas.text((dx - canvas.textlength(label, font=axis) / 2, plot_y1 + 6),
+                    label, font=axis, fill=FAINT)
+
+    canvas.text((dots[2][0] - 160, dots[2][1] - 30), "+31.5% on the day",
+                font=value, fill=RED)
+    canvas.text((x0, y1 - 16),
+                "Shares had closed at $213.66 on 29 Oct, before the scandal broke.",
+                font=caption, fill=FAINT)
+
+
+def paint_lead(canvas):
+    kicker = typeface(SANS_BOLD, 12)
+    canvas.text((MARGIN, 122), "LEAD STORY  ·  ANNOUNCED MONDAY",
+                font=kicker, fill=RED)
+
+    headline = typeface(SERIF_BOLD, 58)
+    canvas.text((MARGIN, 138), "HUANG IS BACK", font=headline, fill=INK)
+
+    deck = typeface(SERIF_ITALIC, 20)
+    canvas.text((MARGIN, 202),
+                "Shares jump about 33% as the board reverses course — "
+                "and Trump says: \"I made the deal.\"",
+                font=deck, fill=INK)
+    rule(canvas, 230, 1, color=HAIR)
+
+    body = typeface(SERIF, 14)
+    y = 242
+    for paragraph in LEAD_BODY:
+        y = paint_paragraph(canvas, MARGIN, y, 600, paragraph, body, 18)
+        y += 8
+
+    paint_share_chart(canvas, 664, 242, RIGHT, 442)
+    rule(canvas, 452, 4)
+
+
+# ---------------------------------------------------------------- story panels
+
+PANELS = [
+    (
+        "LIBYA — CONFIRMED MONDAY",
+        "Kyiv says it sank Russian warship",
+        "Zelenskyy confirmed on Monday that seven Ukrainian naval drones "
+        "sank the Russian corvette Merkury off Benghazi on Sunday. A Ka-27 "
+        "helicopter aboard was destroyed and the cargo ship MV Angara was "
+        "hit. The UN called for an independent investigation.",
+    ),
+    (
+        "EUROPE — PROPOSED MONDAY",
+        "EU proposes 22nd sanctions package",
+        "Ursula von der Leyen presented the proposed 22nd package on "
+        "Monday: about 60 Russian banks cut from SWIFT, a crypto crackdown "
+        "and a new task force, 70+ more shadow-fleet ships listed, and a "
+        "ban on the Russian flag at EU sports events. All 27 states must agree.",
+    ),
+    (
+        "INDIA–NEPAL — ANNOUNCED MONDAY",
+        "$1.62bn lifeline for flood-hit Nepal",
+        "India announced on Monday a $1.62bn package for flood-hit Nepal — "
+        "a $377m grant for reconstruction and a $1.24bn credit line for "
+        "energy — after talks between PM Narendra Modi and Nepali PM "
+        "Balendra Shah. The 26 Aug floods killed about 1,500 people; "
+        "5,200 are missing.",
+    ),
+    (
+        "GAZA — TUESDAY",
+        "Strike kills 3 in Khan Younis",
+        "An Israeli airstrike killed at least three Palestinians on Tuesday "
+        "near a police outpost in Khan Younis, medics said; five were "
+        "wounded. At least 1,600 Palestinians and five Israeli soldiers "
+        "have died since the October 2025 ceasefire. Four nations urged aid "
+        "access to flooded Gaza.",
+    ),
+    (
+        "SPORT — TUESDAY",
+        "2031 Women's World Cup to US & Mexico",
+        "FIFA confirmed the 2031 Women's World Cup will be hosted by the "
+        "United States, Mexico, Costa Rica and Jamaica; the 2035 edition "
+        "goes to the United Kingdom.",
+    ),
+    (
+        "GULF — TUESDAY",
+        "Iran claims US drone downed; US sanctions widen",
+        "Iran's army said on Tuesday it shot down a US drone — reported as "
+        "a \"Lucas\" drone — over the Gulf. The US Treasury sanctioned more "
+        "than two dozen Iranian exchange houses and front firms under "
+        "\"Operation Economic Outcast\".",
+    ),
+]
+
+
+def paint_panel(canvas, x, y, width, kicker, headline, body):
+    kick = typeface(SANS_BOLD, 11)
+    head = typeface(SERIF_BOLD, 18)
+    text = typeface(SERIF, 13)
+
+    canvas.text((x, y), kicker, font=kick, fill=RED)
+    y += 18
+    head_lines = fit_lines(canvas, headline, head, width)
+    for line in head_lines:
+        canvas.text((x, y), line, font=head, fill=INK)
+        y += 21
+    y += 5
+    paint_paragraph(canvas, x, y, width, body, text, 16)
+
+
+def paint_panels(canvas):
+    col_w = 304
+    xs = [MARGIN, 360, 680]
+    ys = [464, 648]
+    for row, y in enumerate(ys):
+        for col, x in enumerate(xs):
+            paint_panel(canvas, x, y, col_w, *PANELS[row * 3 + col])
+    for divider_x in (348, 668):
+        canvas.line([(divider_x, 464), (divider_x, 824)], fill=HAIR, width=1)
+    canvas.line([(MARGIN, 640), (RIGHT, 640)], fill=HAIR, width=1)
+    rule(canvas, 836, 4)
+
+
+# ---------------------------------------------------------------- In Brief
+
+BRIEF = [
+    ("UKRAINE", "Fresh Russian drone and missile strikes hit the Kyiv region on Tuesday."),
+    ("SOUTH SUDAN", "24 people, including seven children, killed in a strike."),
+    ("UNITED NATIONS", "Talks on lethal autonomous weapons ended with no pact."),
+    ("MYANMAR", "The ICJ ruled on Thursday that Myanmar committed genocide against the Rohingya (9–6), the first such finding against a state."),
+    ("CRICKET", "India v New Zealand first Test at Wellington ended in a draw."),
+    ("BALTIC", "Crew of the Russian cargo ship Sparta II evacuated after a drone hit."),
+    ("HORMUZ", "Three oil tankers hit sea mines and caught fire in the Strait of Hormuz, Iran's Revolutionary Guard says."),
+    ("CYPRUS", "Two Russian diplomats had to leave the island."),
+    ("KOREA", "Suspected North Korean aircraft violated South Korean airspace."),
+    ("IOWA", "Trump ordered the Army not to detonate bomb chemicals without court approval."),
+]
+
+
+def paint_brief(canvas):
+    heading = typeface(SANS_BOLD, 15)
+    canvas.text((MARGIN, 846), "IN BRIEF", font=heading, fill=INK)
+    rule(canvas, 870, 1, color=HAIR)
+
+    label_font = typeface(SERIF_BOLD, 12)
+    item_font = typeface(SERIF, 12)
+    for col, x in enumerate((MARGIN, 524)):
+        y = 878
+        for label, text in BRIEF[col * 5:(col + 1) * 5]:
+            full = f"{label} — {text}"
+            for line in fit_lines(canvas, full, item_font, 460):
+                canvas.text((x, y), line, font=item_font, fill=INK)
+                y += 15
+            y += 6
+
+
+# ---------------------------------------------------------------- assemble
+
+def build_page():
+    page = Image.new("RGB", (PAGE, PAGE), PAPER)
+    canvas = ImageDraw.Draw(page)
+    canvas.rectangle([16, 16, PAGE - 17, PAGE - 17], outline=INK, width=2)
+    paint_masthead(canvas)
+    paint_lead(canvas)
+    paint_panels(canvas)
+    paint_brief(canvas)
+    return page
 
 
 if __name__ == "__main__":
-    main()
+    here = os.path.dirname(os.path.abspath(__file__))
+    build_page().save(os.path.join(here, "entry.png"), format="PNG")
+    print("entry.png written")
